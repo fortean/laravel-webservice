@@ -1,7 +1,19 @@
 {
     "name": "fortean/laravel-webservice",
+    "type": "library",
+    "description": "An Httpful-based web service provider for Laravel",
+    "keywords": ["laravel", "webservice", "httpful", "rest"],
+    "homepage": "https://github.com/fortean/laravel-webservice",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Bruce Walter",
+            "email": "walter@fortean.com",
+            "role": "Developer"
+        }
+    ],
     "require": {
-        "php": ">=5.5",
+        "php": ">=5.4",
         "illuminate/support": "~5.1.0",
         "nategood/httpful": "*"
     },

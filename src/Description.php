@@ -5,7 +5,6 @@ namespace Fortean\Webservice;
 class Description
 {
 	protected $serviceName;
-	protected $client;
 	protected $service;
 	protected $defaults;
 	protected $parameters;
@@ -14,39 +13,16 @@ class Description
 	/**
 	 * Service description constructor
 	 * 
-	 * @param array $service
+	 * @param array $serviceName
 	 * @return void
 	 */
 	public function __construct($serviceName)
 	{
 		$this->serviceName = $serviceName;
-		$this->client = config('webservice.'.$serviceName.'.client', []);
 		$this->service = config('webservice.'.$serviceName.'.service', []);
 		$this->defaults = config('webservice.'.$serviceName.'.defaults', []);
 		$this->parameters = config('webservice.'.$serviceName.'.parameters', []);
 		$this->operations = config('webservice.'.$serviceName.'.operations', []);
-
-		// Substitute parameter definitions into named operation parameter fields
-		foreach ($this->operations as $opName => $opConfig)
-		{
-			if (is_array($opConfig) && isset($opConfig['parameters']) && is_array($opConfig['parameters']))
-			{
-				foreach ($opConfig['parameters'] as $parmName => $parmConfig)
-				{
-					if (is_string($parmConfig) && preg_match('/^(.*?):(.*)$/', $parmConfig, $regs))
-					{
-						list($match, $namespace, $key) = $regs;
-
-						if (!isset($this->parameters[$namespace][$key]))
-						{
-							throw new WebserviceException("Named parameter '".$parmConfig."' not found in service '".$this->serviceName."'");
-						}
-
-						$this->operations[$opName]['parameters'][$parmName] = $this->parameters[$namespace][$key];
-					}
-				}
-			}
-		}
 
 		// Sanity check the service
 		if (!isset($this->service['baseUrl']))
@@ -54,23 +30,44 @@ class Description
 			throw new WebserviceException("baseURL is a required field");
 		}
 
-		// Sanuty check the operations
-		foreach ($this->operations as $opName => $opConfig)
+		// Sanity check operations
+		foreach ($this->operations as $opName => &$opConfig)
 		{
-			if (!isset($opConfig['httpMethod']) || !isset($opConfig['uri']) ||
-				!isset($opConfig['responseType']) || !in_array($opConfig['responseType'], ['json', 'xml']) ||
-				!isset($opConfig['parameters']) || !is_array($opConfig['parameters']))
+			// Check for basic operations requirements
+			if (!is_array($opConfig) || !isset($opConfig['httpMethod']) || !isset($opConfig['uri']) ||
+				!isset($opConfig['parameters']) || !is_array($opConfig['parameters']) ||
+				!isset($opConfig['responseType']) || !in_array($opConfig['responseType'], ['json', 'xml']))
 			{
 				throw new WebserviceException("Invalid operation configuration for '".$opName."'");
 			}
-			foreach ($opConfig['parameters'] as $parmName => $parmConfig)
+
+			// Substitute named parameter definitions into operation parameter fields
+			foreach ($opConfig['parameters'] as $parmName => &$parmConfig)
 			{
-				if (!isset($parmConfig['type']) || !isset($parmConfig['location']) || !in_array($parmConfig['location'], ['uri', 'query']))
+				// Parameter names are formatted as 'namespace:parameter'
+				if (is_string($parmConfig) && preg_match('/^(.*?):(.*)$/', $parmConfig, $regs))
+				{
+					list($match, $namespace, $parameter) = $regs;
+
+					// Fail if the named parameter doesn't exist
+					if (!isset($this->parameters[$namespace][$parameter]))
+					{
+						throw new WebserviceException("Named parameter '".$parmConfig."' not found in service '".$this->serviceName."'");
+					}
+
+					// Substitute the config
+					$parmConfig = $this->parameters[$namespace][$parameter];
+				}
+
+				// Check the resulting configuration
+				if (!isset($parmConfig['type']) || !in_array(gettype($parmConfig['type']), ['string', 'array']) ||
+					!isset($parmConfig['location']) || !in_array($parmConfig['location'], ['uri', 'query']))
 				{
 					throw new WebserviceException("Invalid parameter configuration for '".$opName.":".$parmName."'");
 				}
 
-				if (isset($parmConfig['default']) && !isset($this->defaults[$parmName]))
+				// Defaults in the parameter configuration override service-wide defaults
+				if (isset($parmConfig['default']))
 				{
 					$this->defaults[$parmName] = $parmConfig['default'];
 				}
@@ -78,7 +75,14 @@ class Description
 		}
 	}
 
-	public function buildOperationUri($operation, $parameters = [])
+	/**
+	 * Build a uri based on the named operation and provided parameters
+	 * 
+	 * @param string $operation
+	 * @param array $parameters
+	 * @return string
+	 */
+	public function buildUri($operation, $parameters = [])
 	{
 		// Check if we have this operation
 		if (!isset($this->operations[$operation]))
@@ -89,8 +93,10 @@ class Description
 		// Overlay passed parameters onto the any provided defaults
 		$parameters = array_merge($this->defaults, $parameters);
 
-		// Step through the operation parameters
+		// Assemble the uri first so substitutions can take place on the base as well
 		$uri = rtrim($this->service['baseUrl'], '/').'/'.ltrim($this->operations[$operation]['uri']);
+
+		// Step through the operation parameters substituting parameters in the uri and tracking query parameters
 		$query = [];
 		foreach ($this->operations[$operation]['parameters'] as $parmName => $parmConfig)
 		{
@@ -98,6 +104,7 @@ class Description
 			$value = isset($parameters[$parmName]) ? $parameters[$parmName] : null;
 			$this->testParameter($parmName, $parmConfig, $value);
 
+			// Replace or track parameters
 			switch($parmConfig['location'])
 			{
 				case 'uri':
@@ -110,6 +117,7 @@ class Description
 			}
 		}
 
+		// If there are query parameters assemble them and attach them to the uri
 		if (count($query))
 		{
 			$uri .= '?'.http_build_query($query);
@@ -118,6 +126,12 @@ class Description
 		return $uri;
 	}
 
+	/**
+	 * Return the response type of the named operation
+	 * 
+	 * @param string $operation
+	 * @return string
+	 */
 	public function getResponseType($operation)
 	{
 		// Check if we have this operation
@@ -141,13 +155,13 @@ class Description
 			return;
 		}
 
-		// Assume we're valid
+		// Run all defined tests and throw an exception on failure
 		foreach ($parmConfig as $rule => $criteria)
 		{
 			switch($rule)
 			{
 				case 'type':
-					if (!$this->checkParameterType($criteria, $value)) throw new WebserviceException($parmName.' is not the correct type');
+					if (!$this->valueTypeValid($criteria, $value)) throw new WebserviceException($parmName.' is not the correct type');
 					break;
 
 				case 'enum':
@@ -170,27 +184,48 @@ class Description
 		}
 	}
 
-    protected function checkParameterType($type, $value)
+    protected function valueTypeValid($type, $value)
     {
-        if ($type == 'string' && (is_string($value) || (is_object($value) && method_exists($value, '__toString')))) {
-            return true;
-        } elseif ($type == 'object' && (is_array($value) || is_object($value))) {
-            return true;
-        } elseif ($type == 'array' && is_array($value)) {
-            return true;
-        } elseif ($type == 'integer' && is_integer($value)) {
-            return true;
-        } elseif ($type == 'boolean' && is_bool($value)) {
-            return true;
-        } elseif ($type == 'number' && is_numeric($value)) {
-            return true;
-        } elseif ($type == 'numeric' && is_numeric($value)) {
-            return true;
-        } elseif ($type == 'null' && !$value) {
-            return true;
-        } elseif ($type == 'any') {
-            return true;
-        }
+    	// We may have been provided multiple types
+    	$types = is_array($type) ? $type : [$type];
+
+    	// First matching type is good enough
+    	foreach ($types as $checkType)
+    	{
+	        if (($checkType == 'string') && (is_string($value) || (is_object($value) && method_exists($value, '__toString'))))
+	        {
+	            return true;
+	        }
+	        elseif (($checkType == 'object') && (is_array($value) || is_object($value)))
+	        {
+	            return true;
+	        }
+	        elseif (($checkType == 'array') && is_array($value))
+	        {
+	            return true;
+	        }
+	        elseif (($checkType == 'integer') && is_integer($value))
+	        {
+	            return true;
+	        }
+	        elseif (($checkType == 'boolean') && is_bool($value))
+	        {
+	            return true;
+	        }
+	        elseif ((($checkType == 'number') || ($checkType == 'numeric')) && is_numeric($value))
+	        {
+	            return true;
+	        }
+	        elseif (($checkType == 'null') && !is_null($value))
+	        {
+	            return true;
+	        }
+	        elseif ($checkType == 'any')
+	        {
+	            return true;
+	        }
+    	}
+
         return false;
     }
 }

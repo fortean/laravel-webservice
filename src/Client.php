@@ -8,6 +8,7 @@ class Client
 {
 	protected $serviceName;
 	protected $description;
+	protected $config;
 
 	/**
 	 * Webservice client constructor
@@ -19,6 +20,7 @@ class Client
 	{
 		$this->serviceName = $serviceName;
 		$this->description = new Description($serviceName);
+		$this->config = config('webservice.'.$serviceName.'.client', []);
 	}
 
 	/**
@@ -38,7 +40,7 @@ class Client
 		}
 
 		// Build a URI from the passed data
-		$uri = $this->description->buildOperationUri($name, $parameters);
+		$uri = $this->description->buildUri($name, $parameters);
 
 		// Find the response type we're expecting
 		$responseType = $this->description->getResponseType($name);

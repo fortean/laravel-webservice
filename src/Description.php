@@ -91,7 +91,7 @@ class Description
 		}
 
 		// Overlay passed parameters onto the any provided defaults
-		$parameters = array_merge($this->defaults, $parameters);
+		$parameters = array_merge($this->defaults, isset($parameters) ? $parameters : []);
 
 		// Assemble the uri first so substitutions can take place on the base as well
 		$uri = rtrim($this->service['baseUrl'], '/').'/'.ltrim($this->operations[$operation]['uri']);

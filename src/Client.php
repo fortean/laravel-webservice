@@ -32,14 +32,17 @@ class Client
 	 */
 	public function __call($name, $args)
 	{
-		// The first argument should always be an associative array of operation parameters
-		if ((count($args) == 0) || !is_array($args[0]))
+		// Operation calls should only have one parameter
+		$params = array_shift($args);
+
+		// And that parameter should be either a null, an empty array or an associative array of parameters
+		if (!is_null($params) && !is_array($params))
 		{
 			throw new WebserviceException('Operations must pass null or an associative array as their first parameter');
 		}
 
 		// Build a URI from the passed data
-		$uri = $this->description->buildUri($name, $args[0]);
+		$uri = $this->description->buildUri($name, $params);
 
 		// Find the response type we're expecting
 		$responseType = $this->description->getResponseType($name);

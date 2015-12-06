@@ -32,15 +32,14 @@ class Client
 	 */
 	public function __call($name, $args)
 	{
-		// Parameters should be an associative array
-		$parameters = count($args) ? $args[0] : [];
-		if (!is_array($parameters) || (count($args) > 1))
+		// The first argument should always be an associative array of operation parameters
+		if ((count($args) == 0) || !is_array($args[0]))
 		{
-			throw new WebserviceException('Operations must pass an associative array as their only parameter');
+			throw new WebserviceException('Operations must pass null or an associative array as their first parameter');
 		}
 
 		// Build a URI from the passed data
-		$uri = $this->description->buildUri($name, $parameters);
+		$uri = $this->description->buildUri($name, $args[0]);
 
 		// Find the response type we're expecting
 		$responseType = $this->description->getResponseType($name);
